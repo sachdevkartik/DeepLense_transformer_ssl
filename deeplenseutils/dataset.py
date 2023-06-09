@@ -1,13 +1,17 @@
 import os
+
 import gdown
-import splitfolders
-from torch.utils.data import DataLoader, Dataset
-import numpy as np
-from PIL import Image
-from configs.data_config import DATASET
 import matplotlib.pyplot as plt
+import numpy as np
+import splitfolders
 import torch
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import ToPILImage
+
+from configs.data_config import DATASET
+from deeplenseutils.augmentation import DefaultTransformations
+from deeplenseutils.util import make_directories
 
 
 def download_dataset(
@@ -78,12 +82,12 @@ class DeepLenseDataset(Dataset):
 
         Args:
             destination_dir (str): directory where dataset is stored \n
-            mode (str): type of dataset:  `train` or `val` or `test` 
+            mode (str): type of dataset:  `train` or `val` or `test`
             dataset_name (str): name of dataset e.g. Model_I
             transform (_type_, optional): transformation of images. Defaults to None.
             download (str, optional): whether to download the dataset. Defaults to "False".
             channels (int, optional): # of channels. Defaults to 1.
-        
+
         Example:
             >>>     trainset = DeepLenseDataset(
             >>>     dataset_dir,
@@ -119,22 +123,19 @@ class DeepLenseDataset(Dataset):
         if download and not os.path.isdir(foldername) is True:
             if not os.path.isfile(filename):
                 download_dataset(
-                    filename, url=url,
+                    filename,
+                    url=url,
                 )
             extract_split_dataset(filename, destination_dir)
         else:
-            assert (
-                os.path.isdir(foldername) is True
-            ), "Dataset doesn't exists, set arg download to True!"
+            assert os.path.isdir(foldername) is True, "Dataset doesn't exists, set arg download to True!"
 
             print(f"{dataset_name} dataset already exists")
 
         self.root_dir = foldername
 
         self.transform = transform
-        classes = os.listdir(
-            self.root_dir
-        )  # [join(self.root_dir, x).split('/')[3] for x in listdir(self.root_dir)]
+        classes = os.listdir(self.root_dir)  # [join(self.root_dir, x).split('/')[3] for x in listdir(self.root_dir)]
         classes.sort()
         self.class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
         self.imagefilename = []
@@ -158,18 +159,14 @@ class DeepLenseDataset(Dataset):
         if self.transform is not None:
             transformed = self.transform(image=image)
             image = transformed["image"]
-            image = (
-                image.float().clone().detach()  # .requires_grad_(True)
-            )  # torch.tensor(image, dtype=torch.float32)
+            image = image.float().clone().detach()  # .requires_grad_(True)  # torch.tensor(image, dtype=torch.float32)
         return image, label
 
     def __len__(self):
         return len(self.labels)
 
 
-def visualize_samples(
-    dataset, labels_map, fig_height=15, fig_width=15, num_cols=5, cols_rows=5
-) -> None:
+def visualize_samples(dataset, labels_map, fig_height=15, fig_width=15, num_cols=5, cols_rows=5) -> None:
     """Visualize samples from dataset
 
     Args:
@@ -189,7 +186,7 @@ def visualize_samples(
         figure.add_subplot(rows, cols, i)
         plt.title(f"{labels_map[label]}")
         plt.axis("off")
-        im = ToPILImage()(img)
+        # im = ToPILImage()(img)
         img = img.squeeze()
         plt.imshow(img, cmap="gray")
         # plt.imshow(img)
@@ -229,22 +226,19 @@ class DeepLenseDataset_dataeff(Dataset):
         if download and not os.path.isdir(foldername) is True:
             if not os.path.isfile(filename):
                 download_dataset(
-                    filename, url=url,
+                    filename,
+                    url=url,
                 )
             extract_split_dataset(filename, destination_dir)
         else:
-            assert (
-                os.path.isdir(foldername) is True
-            ), "Dataset doesn't exists, set arg download to True!"
+            assert os.path.isdir(foldername) is True, "Dataset doesn't exists, set arg download to True!"
 
             print("Dataset already exists")
 
         self.root_dir = foldername
 
         self.transform = transform
-        classes = os.listdir(
-            self.root_dir
-        )  # [join(self.root_dir, x).split('/')[3] for x in listdir(self.root_dir)]
+        classes = os.listdir(self.root_dir)  # [join(self.root_dir, x).split('/')[3] for x in listdir(self.root_dir)]
         classes.sort()
         self.class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
         # self.imagefilename = []
@@ -260,12 +254,13 @@ class DeepLenseDataset_dataeff(Dataset):
         # if not os.path.exists(f"images_mmep_{mode}.npy"):
 
         self.images_mmep = np.memmap(
-            f"images_mmep_{mode}.npy", dtype="int16", mode="w+", shape=(num, 150, 150),
+            f"images_mmep_{mode}.npy",
+            dtype="int16",
+            mode="w+",
+            shape=(num, 150, 150),
         )
 
-        self.labels_mmep = np.memmap(
-            f"labels_mmep_{mode}.npy", dtype="float64", mode="w+", shape=(num, 1)
-        )
+        self.labels_mmep = np.memmap(f"labels_mmep_{mode}.npy", dtype="float64", mode="w+", shape=(num, 1))
 
         w_index = 0
         for i in classes:
@@ -296,3 +291,106 @@ class DeepLenseDataset_dataeff(Dataset):
 
     def __len__(self):
         return len(self.labels)
+
+
+class CustomDataset(Dataset):
+    """Create custom dataset for the given data"""
+
+    def __init__(self, root_dir, mode, transform=None):
+        assert mode in ["train", "test", "val"]
+
+        self.root_dir = root_dir
+
+        if mode == "train":
+            self.root_dir = self.root_dir + "/train"
+        elif mode == "test":
+            self.root_dir = self.root_dir + "/test"
+        else:
+            self.root_dir = self.root_dir + "/val"
+
+        self.transform = transform
+        classes = os.listdir(self.root_dir)
+        classes.sort()
+        self.class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+        self.imagefilename = []
+        self.labels = []
+
+        for i in classes:
+            for x in os.listdir(os.path.join(self.root_dir, i)):
+                self.imagefilename.append(os.path.join(self.root_dir, i, x))
+                self.labels.append(self.class_to_idx[i])
+
+    def __getitem__(self, index):
+        image, label = self.imagefilename[index], self.labels[index]
+
+        image = Image.open(image)
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, label
+
+    def __len__(self):
+        return len(self.labels)
+
+
+class DefaultDatasetSetup:
+    def __init__(self) -> None:
+        # parent directory
+        current_file = os.path.abspath(__file__)
+        parent_directory = os.path.dirname(current_file)
+
+        self.data_dir = os.path.join(parent_directory, "../data/lenses")
+        self.data_dir_temp = os.path.join(parent_directory, "../data/lenses_temp")
+        self.zip_data_file = os.path.join(parent_directory, "../data/lenses.tgz")
+        self.default_transform = DefaultTransformations()
+        self.train_transform = self.default_transform.get_train_transform_eqv()
+        self.test_transform = self.default_transform.get_test_transform()
+
+    def get_default_cfg(self, dataset_name="Model_III"):
+        self.default_dataset_cfg = {}
+        self.default_dataset_cfg["dataset_name"] = dataset_name
+        self.default_dataset_cfg["dataset_dir"] = "data"
+        self.default_dataset_cfg["dataset"] = DATASET[self.default_dataset_cfg["dataset_name"]]
+        self.default_dataset_cfg["classes"] = self.default_dataset_cfg["dataset"]["classes"]
+        self.default_dataset_cfg["train_url"] = self.default_dataset_cfg["dataset"]["train_url"]
+
+        make_directories([self.default_dataset_cfg["dataset_dir"]])
+
+    def download_dataset(self):
+        """Check if the compressed data file from gdrive exist else download in the directory"""
+
+        if not os.path.isfile(self.zip_data_file):
+            url = self.default_dataset_cfg["train_url"]
+            output = self.zip_data_file
+            gdown.download(url, output, quiet=False)
+        else:
+            print("File exists")
+
+        if os.path.isdir(self.data_dir):
+            print("Extracted folder exists")
+        else:
+            print("Extracting folder")
+            os.system(f"tar xf {self.zip_data_file} --directory data ; mv {self.data_dir} {self.data_dir_temp}")
+            splitfolders.ratio(self.data_dir_temp, output=self.data_dir, seed=1337, ratio=(0.9, 0.1))
+            os.system(f"rm -r {self.data_dir_temp}")
+
+    def setup(self):
+        self.get_default_cfg()
+        self.download_dataset()
+
+    def get_default_trainset(self):
+        self.trainset = CustomDataset(self.data_dir, "train", transform=self.train_transform)
+        # get the number of samples in train and test set
+        print(f"Train Data: {len(self.trainset)}")
+        return self.trainset
+
+    def get_default_testset(self):
+        self.testset = CustomDataset(self.data_dir, "val", transform=self.test_transform)
+        print(f"Test train Data: {len(self.testset)}")
+
+        return self.testset
+
+    def visualize_trainset(self):
+        visualize_samples(self.trainset, labels_map=self.default_dataset_cfg["classes"])
+
+    def visualize_testset(self):
+        visualize_samples(self.testset, labels_map=self.default_dataset_cfg["classes"])
