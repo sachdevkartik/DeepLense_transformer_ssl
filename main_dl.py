@@ -19,7 +19,8 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 from albumentations.pytorch import ToTensorV2
-from timm.utils import AverageMeter
+from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
+from timm.utils import AverageMeter, accuracy
 from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 from torch.utils.data import DataLoader
 from torchinfo import summary
@@ -32,7 +33,11 @@ from configs.cvt_config import CvT_CONFIG
 from configs.data_config import DATASET
 from data import build_loader
 from deeplenseutils.augmentation import *
-from deeplenseutils.dataset import DefaultDatasetSetup
+from deeplenseutils.dataset import (
+    DefaultDatasetSetup,
+    get_samplers,
+    visualize_samples_ssl,
+)
 from deeplenseutils.inference import Inference
 from deeplenseutils.train import train
 from logger import create_logger
@@ -170,7 +175,80 @@ def parse_option():
     return args, config
 
 
-def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
+def main(config, train_loader, trainset, val_loader, valset):
+    dataset_train = trainset
+    data_loader_train = train_loader
+
+    config.defrost()
+    config.DATA.TRAINING_IMAGES = len(dataset_train)
+    config.freeze()
+
+    logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
+    model = build_model(config)
+    model.cuda()
+    logger.info(str(model))
+
+    optimizer = build_optimizer(config, model)
+    if config.AMP_OPT_LEVEL != "O0":
+        model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
+
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+    model_without_ddp = model.module
+
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"number of params: {n_parameters}")
+    if hasattr(model_without_ddp, "flops"):
+        flops = model_without_ddp.flops()
+        logger.info(f"number of GFLOPs: {flops / 1e9}")
+
+    lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
+
+    if config.AUG.MIXUP > 0.0:
+        # smoothing is handled with mixup label transform
+        criterion = SoftTargetCrossEntropy()
+    elif config.MODEL.LABEL_SMOOTHING > 0.0:
+        criterion = LabelSmoothingCrossEntropy(smoothing=config.MODEL.LABEL_SMOOTHING)
+    else:
+        criterion = torch.nn.CrossEntropyLoss()
+
+    print("criterion: ", criterion)
+
+    max_accuracy = 0.0
+
+    if config.TRAIN.AUTO_RESUME:
+        resume_file = auto_resume_helper(config.OUTPUT)
+        if resume_file:
+            if config.MODEL.RESUME:
+                logger.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
+            config.defrost()
+            config.MODEL.RESUME = resume_file
+            config.freeze()
+            logger.info(f"auto resuming from {resume_file}")
+        else:
+            logger.info(f"no checkpoint found in {config.OUTPUT}, ignoring auto resume")
+
+    if config.MODEL.RESUME:
+        _ = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
+
+    logger.info("Start self-supervised pre-training")
+    start_time = time.time()
+    for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
+        data_loader_train.sampler.set_epoch(epoch)
+
+        train_one_epoch(config, model, data_loader_train, optimizer, epoch, lr_scheduler, criterion)
+        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+            save_checkpoint(config, epoch, model_without_ddp, 0.0, optimizer, lr_scheduler, logger)
+        acc1, acc5, loss = validate(config, val_loader, model)
+        logger.info(f"Accuracy of the network on the {len(valset)} test images: {acc1:.1f}%")
+        max_accuracy = max(max_accuracy, acc1)
+        logger.info(f"Max accuracy: {max_accuracy:.2f}%")
+
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    logger.info(f"Training time {total_time_str}")
+
+
+def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler, criterion):
     model.train()
     optimizer.zero_grad()
 
@@ -181,29 +259,56 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 
     start = time.time()
     end = time.time()
-    for idx, (samples_1, samples_2, targets) in enumerate(data_loader):
-        samples_1 = samples_1.cuda(non_blocking=True)
-        samples_2 = samples_2.cuda(non_blocking=True)
+    for idx, (sample_1, sample_2, targets) in enumerate(data_loader):
+        sample_1 = sample_1.cuda(non_blocking=True)
+        sample_2 = sample_2.cuda(non_blocking=True)
+        samples = (sample_1, sample_2)
         targets = targets.cuda(non_blocking=True)
 
-        loss = model(samples_1, samples_2)
+        outputs = model(sample_1, sample_2)
 
-        optimizer.zero_grad()
-        if config.AMP_OPT_LEVEL != "O0":
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
-            if config.TRAIN.CLIP_GRAD:
-                grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
+        if config.TRAIN.ACCUMULATION_STEPS > 1:
+            loss = criterion(outputs, targets)
+            print("outputs: ", outputs)
+            print("targets: ", targets)
+            print("loss: ", loss)
+
+            loss = loss / config.TRAIN.ACCUMULATION_STEPS
+            if config.AMP_OPT_LEVEL != "O0":
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+                if config.TRAIN.CLIP_GRAD:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
+                else:
+                    grad_norm = get_grad_norm(amp.master_params(optimizer))
             else:
-                grad_norm = get_grad_norm(amp.master_params(optimizer))
+                loss.backward()
+                if config.TRAIN.CLIP_GRAD:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+                else:
+                    grad_norm = get_grad_norm(model.parameters())
+            if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                lr_scheduler.step_update(epoch * num_steps + idx)
         else:
-            loss.backward()
-            if config.TRAIN.CLIP_GRAD:
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+            loss = criterion(outputs, targets)
+            optimizer.zero_grad()
+            if config.AMP_OPT_LEVEL != "O0":
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+                if config.TRAIN.CLIP_GRAD:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
+                else:
+                    grad_norm = get_grad_norm(amp.master_params(optimizer))
             else:
-                grad_norm = get_grad_norm(model.parameters())
-        optimizer.step()
-        lr_scheduler.step_update(epoch * num_steps + idx)
+                loss.backward()
+                if config.TRAIN.CLIP_GRAD:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+                else:
+                    grad_norm = get_grad_norm(model.parameters())
+            optimizer.step()
+            lr_scheduler.step_update(epoch * num_steps + idx)
 
         torch.cuda.synchronize()
 
@@ -228,67 +333,54 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
-def main(config, train_loader, trainset):
-    dataset_train = trainset
-    data_loader_train = train_loader
+@torch.no_grad()
+def validate(config, data_loader, model):
+    criterion = torch.nn.CrossEntropyLoss()
+    model.eval()
 
-    config.defrost()
-    config.DATA.TRAINING_IMAGES = len(dataset_train)
-    config.freeze()
+    batch_time = AverageMeter()
+    loss_meter = AverageMeter()
+    acc1_meter = AverageMeter()
+    acc5_meter = AverageMeter()
 
-    logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
-    model = build_model(config)
-    model.cuda()
-    logger.info(str(model))
+    end = time.time()
+    for idx, (sample_1, sample_2, targets) in enumerate(data_loader):
+        sample_1 = sample_1.cuda(non_blocking=True)
+        sample_2 = sample_2.cuda(non_blocking=True)
+        # images = images.cuda(non_blocking=True)
+        target = targets.cuda(non_blocking=True)
 
-    optimizer = build_optimizer(config, model)
-    if config.AMP_OPT_LEVEL != "O0":
-        model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
+        # compute output
+        output = model(sample_1, sample_2)
 
-    # model = torch.nn.parallel.DistributedDataParallel(
-    #     model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False
-    # )
-    model_without_ddp = model.module
+        # measure accuracy and record loss
+        loss = criterion(output, target)
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info(f"number of params: {n_parameters}")
-    if hasattr(model_without_ddp, "flops"):
-        flops = model_without_ddp.flops()
-        logger.info(f"number of GFLOPs: {flops / 1e9}")
+        acc1 = reduce_tensor(acc1)
+        acc5 = reduce_tensor(acc5)
+        loss = reduce_tensor(loss)
 
-    lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
+        loss_meter.update(loss.item(), target.size(0))
+        acc1_meter.update(acc1.item(), target.size(0))
+        acc5_meter.update(acc5.item(), target.size(0))
 
-    if config.TRAIN.AUTO_RESUME:
-        resume_file = auto_resume_helper(config.OUTPUT)
-        if resume_file:
-            if config.MODEL.RESUME:
-                logger.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
-            config.defrost()
-            config.MODEL.RESUME = resume_file
-            config.freeze()
-            logger.info(f"auto resuming from {resume_file}")
-        else:
-            logger.info(f"no checkpoint found in {config.OUTPUT}, ignoring auto resume")
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
 
-    if config.MODEL.RESUME:
-        _ = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
-
-    logger.info("Start self-supervised pre-training")
-    start_time = time.time()
-    for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
-        data_loader_train.sampler.set_epoch(epoch)
-
-        train_one_epoch(config, model, data_loader_train, optimizer, epoch, lr_scheduler)
-        # if dist.get_rank() == 0 and (
-        #     epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)
-        # ):
-        #     save_checkpoint(
-        #         config, epoch, model_without_ddp, 0.0, optimizer, lr_scheduler, logger
-        #     )
-
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    logger.info(f"Training time {total_time_str}")
+        if idx % config.PRINT_FREQ == 0:
+            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
+            logger.info(
+                f"Test: [{idx}/{len(data_loader)}]\t"
+                f"Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t"
+                f"Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t"
+                f"Acc@1 {acc1_meter.val:.3f} ({acc1_meter.avg:.3f})\t"
+                f"Acc@5 {acc5_meter.val:.3f} ({acc5_meter.avg:.3f})\t"
+                f"Mem {memory_used:.0f}MB"
+            )
+    logger.info(f" * Acc@1 {acc1_meter.avg:.3f} Acc@5 {acc5_meter.avg:.3f}")
+    return acc1_meter.avg, acc5_meter.avg, loss_meter.avg
 
 
 def setup(rank, world_size):
@@ -360,10 +452,39 @@ if __name__ == "__main__":
     os.makedirs("logger", exist_ok=True)
     logger = create_logger(output_dir="logger", name="swin_tiny_patch4_window7_224")
 
-    trainset = dataset_setup.get_default_trainset()
-    valset = dataset_setup.get_default_testset()
+    trainset = dataset_setup.get_default_trainset_ssl()
+    valset = dataset_setup.get_default_testset_ssl()
 
+    dataset_setup.get_default_cfg()
+    dataset_setup.visualize_trainset_ssl_method2()
+    # dataset_setup.visualize_trainset_ssl_method2()
+
+    sampler_train, sampler_test = get_samplers(config, trainset, valset)
     batch_size = 64
-    train_loader = DataLoader(dataset=trainset, batch_size=batch_size, shuffle=True)
-    valid_loader = DataLoader(dataset=valset, batch_size=batch_size, shuffle=True)
-    main(config, train_loader=train_loader, trainset=trainset)
+    train_loader = DataLoader(
+        dataset=trainset,
+        batch_size=config.DATA.BATCH_SIZE,
+        shuffle=False,
+        num_workers=config.DATA.NUM_WORKERS,
+        sampler=sampler_train,
+        pin_memory=config.DATA.PIN_MEMORY,
+        drop_last=False,
+    )
+
+    val_loader = DataLoader(
+        dataset=valset,
+        batch_size=config.DATA.BATCH_SIZE,
+        shuffle=False,
+        num_workers=config.DATA.NUM_WORKERS,
+        pin_memory=config.DATA.PIN_MEMORY,
+        sampler=sampler_test,
+        drop_last=False,
+    )
+
+    main(
+        config,
+        train_loader=train_loader,
+        trainset=trainset,
+        val_loader=val_loader,
+        valset=valset,
+    )

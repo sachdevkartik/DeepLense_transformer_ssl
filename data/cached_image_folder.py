@@ -12,7 +12,7 @@ import time
 import torch.distributed as dist
 import torch.utils.data as data
 from PIL import Image
-
+from typing import List, Tuple
 from .zipreader import is_zip_path, ZipReader
 
 
@@ -34,7 +34,7 @@ def find_classes(dir):
     return classes, class_to_idx
 
 
-def make_dataset(dir, class_to_idx, extensions):
+def make_dataset(dir, class_to_idx, extensions) -> List[Tuple]:
     images = []
     dir = os.path.expanduser(dir)
     for target in sorted(os.listdir(dir)):
@@ -49,7 +49,7 @@ def make_dataset(dir, class_to_idx, extensions):
                     item = (path, class_to_idx[target])
                     images.append(item)
 
-    return images
+    return images # [(path, idx)] : List(Tuple)
 
 
 def make_dataset_with_ann(ann_file, img_prefix, extensions):
@@ -143,7 +143,7 @@ class DatasetFolder(data.Dataset):
                 samples_bytes[index] = (path, target)
         self.samples = samples_bytes
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> List[Tuple]:
         """
         Args:
             index (int): Index

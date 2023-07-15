@@ -1,17 +1,17 @@
 TRAIN:
   WARMUP_EPOCHS: 5
-  EPOCHS: 300
+  EPOCHS: 100
   BASE_LR: 0.001
   WEIGHT_DECAY: 0.05
 AUG:
   SSL_AUG: True
 MODEL:
   TYPE: moby
-  NAME: moby__swin_tiny__patch4_window7_224__odpr02_tdpr0_cm099_ct02_queue4096_proj2_pred2
+  NAME: moby_swin_tiny_test
   SWIN:
     EMBED_DIM: 96
-    DEPTHS: [ 2, 2, 6, 2 ]
-    NUM_HEADS: [ 3, 6, 12, 24 ]
+    DEPTHS: [ 2, 1, 1 ]
+    NUM_HEADS: [ 1, 1, 1 ]
     WINDOW_SIZE: 7
   MOBY:
     ENCODER: swin

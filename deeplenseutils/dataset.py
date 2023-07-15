@@ -5,11 +5,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import splitfolders
 import torch
+import torch.distributed as dist
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import ToPILImage
 
 from configs.data_config import DATASET
+from data.samplers import SubsetRandomSampler
 from deeplenseutils.augmentation import DefaultTransformations
 from deeplenseutils.util import make_directories
 
@@ -193,6 +195,91 @@ def visualize_samples(dataset, labels_map, fig_height=15, fig_width=15, num_cols
     plt.show()
 
 
+def visualize_samples_ssl(dataset, labels_map, fig_height=15, fig_width=15, num_cols=5, cols_rows=5) -> None:
+    """Visualize samples from dataset
+
+    Args:
+        dataset (torch.utils.data.Dataset): dataset to visualize
+        labels_map (dict): dict for mapping labels to number e.g `{0: "axion"}`
+        fig_height (int, optional): height of visualized sample. Defaults to 15.
+        fig_width (int, optional): width of visualized sample. Defaults to 15.
+        num_cols (int, optional): # of columns of images in a window. Defaults to 5.
+        cols_rows (int, optional): # of rows of images in a window. Defaults to 5.
+    """
+    # labels_map = {0: "axion", 1: "cdm", 2: "no_sub"}
+    figure = plt.figure(figsize=(fig_height, fig_width))
+    cols, rows = num_cols, cols_rows
+    for i in range(1, cols * rows + 1):
+        sample_idx = torch.randint(len(dataset), size=(1,)).item()
+        img1, img2, label = dataset[sample_idx]
+
+        outer_subplot = figure.add_subplot(rows, cols, i)
+        plt.title(f"{labels_map[label]}")
+        plt.axis("off")
+        img1 = img1.squeeze()
+        plt.imshow(img1, cmap="gray")
+
+    plt.show()
+
+
+def visualize_samples_ssl_method2(dataset, labels_map, fig_height=15, fig_width=15, num_cols=5, cols_rows=5) -> None:
+    """Visualize samples from dataset
+
+    Args:
+        dataset (torch.utils.data.Dataset): dataset to visualize
+        labels_map (dict): dict for mapping labels to number e.g `{0: "axion"}`
+        fig_height (int, optional): height of visualized sample. Defaults to 15.
+        fig_width (int, optional): width of visualized sample. Defaults to 15.
+        num_cols (int, optional): # of columns of images in a window. Defaults to 5.
+        cols_rows (int, optional): # of rows of images in a window. Defaults to 5.
+    """
+    # labels_map = {0: "axion", 1: "cdm", 2: "no_sub"}
+    fig = plt.figure(figsize=(fig_height, fig_width))
+
+    # Number of rows and columns for the outer subplots
+    num_rows_outer = 2
+    num_cols_outer = 2
+
+    # Number of rows and columns for the inner subplots
+    num_rows_inner = 1
+    num_cols_inner = 2
+
+    # Generate the outer subplots
+    outer_subplot_index = 1
+    for row in range(num_rows_outer):
+        for col in range(num_cols_outer):
+            outer_subplot = fig.add_subplot(num_rows_outer, num_cols_outer, outer_subplot_index)
+
+            outer_subplot_index += 1
+            sample_idx = torch.randint(len(dataset), size=(1,)).item()
+            img1, img2, label = dataset[sample_idx]
+            outer_subplot.set_title(f"{labels_map[label]}")
+            img = [img1, img2]
+
+            # Generate the inner subplots within the current outer subplot
+            inner_subplot_index = 1
+            for inner_row in range(num_rows_inner):
+                for inner_col in range(num_cols_inner):
+                    inner_subplot = outer_subplot.inset_axes(
+                        [
+                            inner_col / num_cols_inner,
+                            inner_row / num_rows_inner,
+                            1 / num_cols_inner,
+                            1 / num_rows_inner,
+                        ]
+                    )
+
+                    plot_img = img[inner_col].squeeze()
+                    inner_subplot.imshow(plot_img)  # cmap="gray"
+                    inner_subplot_index += 1
+
+    # Add a title to the main figure
+    fig.suptitle("Main Figure")
+
+    # Display the figure
+    plt.show()
+
+
 class DeepLenseDataset_dataeff(Dataset):
     # TODO: add val-loader + splitting
     def __init__(
@@ -332,6 +419,48 @@ class CustomDataset(Dataset):
         return len(self.labels)
 
 
+class CustomDatasetSSL(Dataset):
+    """Create custom dataset for the given data"""
+
+    def __init__(self, root_dir, mode, transforms=None):
+        assert mode in ["train", "test", "val"]
+
+        self.root_dir = root_dir
+
+        if mode == "train":
+            self.root_dir = self.root_dir + "/train"
+        elif mode == "test":
+            self.root_dir = self.root_dir + "/test"
+        else:
+            self.root_dir = self.root_dir + "/val"
+
+        self.transforms = transforms
+        classes = os.listdir(self.root_dir)
+        classes.sort()
+        self.class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+        self.imagefilename = []
+        self.labels = []
+
+        for i in classes:
+            for x in os.listdir(os.path.join(self.root_dir, i)):
+                self.imagefilename.append(os.path.join(self.root_dir, i, x))
+                self.labels.append(self.class_to_idx[i])
+
+    def __getitem__(self, index):
+        image, label = self.imagefilename[index], self.labels[index]
+
+        image = Image.open(image)
+        ret = []
+        if self.transforms is not None:
+            for t in self.transforms:
+                ret.append(t(image))
+        ret.append(label)
+        return ret
+
+    def __len__(self):
+        return len(self.labels)
+
+
 class DefaultDatasetSetup:
     def __init__(self) -> None:
         # parent directory
@@ -343,6 +472,7 @@ class DefaultDatasetSetup:
         self.zip_data_file = os.path.join(parent_directory, "../data/lenses.tgz")
         self.default_transform = DefaultTransformations()
         self.train_transform = self.default_transform.get_train_transform_eqv()
+        self.train_transforms = self.default_transform.get_train_transforms_ssl()
         self.test_transform = self.default_transform.get_test_transform()
 
     def get_default_cfg(self, dataset_name="Model_III"):
@@ -350,7 +480,7 @@ class DefaultDatasetSetup:
         self.default_dataset_cfg["dataset_name"] = dataset_name
         self.default_dataset_cfg["dataset_dir"] = "data"
         self.default_dataset_cfg["dataset"] = DATASET[self.default_dataset_cfg["dataset_name"]]
-        self.default_dataset_cfg["classes"] = self.default_dataset_cfg["dataset"]["classes"]
+        self.default_dataset_cfg["classes"] = {0: "axion", 1: "no_sub"} #  self.default_dataset_cfg["dataset"]["classes"]
         self.default_dataset_cfg["train_url"] = self.default_dataset_cfg["dataset"]["train_url"]
 
         make_directories([self.default_dataset_cfg["dataset_dir"]])
@@ -389,8 +519,44 @@ class DefaultDatasetSetup:
 
         return self.testset
 
+    def get_default_testset_ssl(self):
+        self.testset = CustomDatasetSSL(self.data_dir, "val", transforms=self.train_transforms)
+        print(f"Test train Data: {len(self.testset)}")
+
+        return self.testset
+
+    def get_default_trainset_ssl(self):
+        self.trainset_ssl = CustomDatasetSSL(self.data_dir, "train", transforms=self.train_transforms)
+        # get the number of samples in train and test set
+        print(f"Train Data: {len(self.trainset_ssl)}")
+        return self.trainset_ssl
+
     def visualize_trainset(self):
         visualize_samples(self.trainset, labels_map=self.default_dataset_cfg["classes"])
 
+    def visualize_trainset_ssl(self):
+        visualize_samples_ssl(self.trainset_ssl, labels_map=self.default_dataset_cfg["classes"])
+
+    def visualize_trainset_ssl_method2(self):
+        visualize_samples_ssl_method2(self.trainset_ssl, labels_map=self.default_dataset_cfg["classes"])
+
     def visualize_testset(self):
         visualize_samples(self.testset, labels_map=self.default_dataset_cfg["classes"])
+
+
+def get_samplers(config, trainset, testset):
+    config.defrost()
+    num_tasks = dist.get_world_size()
+    global_rank = dist.get_rank()
+    if config.DATA.ZIP_MODE and config.DATA.CACHE_MODE == "part":
+        indices = np.arange(dist.get_rank(), len(trainset), dist.get_world_size())
+        sampler_train = SubsetRandomSampler(indices)
+    else:
+        sampler_train = torch.utils.data.DistributedSampler(
+            trainset, num_replicas=num_tasks, rank=global_rank, shuffle=True
+        )
+
+    indices = np.arange(dist.get_rank(), len(testset), dist.get_world_size())
+    sampler_val = SubsetRandomSampler(indices)
+
+    return sampler_train, sampler_val

@@ -209,6 +209,39 @@ class DefaultTransformations:
         )
         return transform_train
 
+    def get_train_transforms_ssl(self):
+        transform_train_1 = Compose(
+            [
+                transforms.RandomCrop(128),
+                self.default_aug_cfg["pad"],
+                self.default_aug_cfg["resize1"],
+                RandomRotation(degrees=(0, 180), resample=Image.BILINEAR, expand=False),
+                RandomAffine(degrees=(20, 80), translate=(0.1, 0.2), scale=(0.4, 0.95)),
+                RandomPerspective(distortion_scale=0.3, p=0.1),
+                # transforms.RandomApply(random_transform, 0.9999),
+                Resize((224, 224)),
+                self.default_aug_cfg["togray"],
+                self.default_aug_cfg["totensor"],
+            ]
+        )
+
+        transform_train_2 = Compose(
+            [
+                transforms.RandomCrop(128),
+                self.default_aug_cfg["pad"],
+                self.default_aug_cfg["resize1"],
+                RandomRotation(degrees=(0, 180), resample=Image.BILINEAR, expand=False),
+                # RandomAffine(degrees=(20, 80), translate=(0.1, 0.2), scale=(0.4, 0.95)),
+                # transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)], p=0.8),
+                # transforms.RandomApply(random_transform, 0.9999),
+                Resize((224, 224)),
+                self.default_aug_cfg["togray"],
+                self.default_aug_cfg["totensor"],
+            ]
+        )
+
+        return [transform_train_1, transform_train_2]
+
     def transform_factory(self):
         random_transform = []
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
