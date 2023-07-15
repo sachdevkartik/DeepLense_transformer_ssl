@@ -480,7 +480,10 @@ class DefaultDatasetSetup:
         self.default_dataset_cfg["dataset_name"] = dataset_name
         self.default_dataset_cfg["dataset_dir"] = "data"
         self.default_dataset_cfg["dataset"] = DATASET[self.default_dataset_cfg["dataset_name"]]
-        self.default_dataset_cfg["classes"] = {0: "axion", 1: "no_sub"} #  self.default_dataset_cfg["dataset"]["classes"]
+        self.default_dataset_cfg["classes"] = {
+            0: "axion",
+            1: "no_sub",
+        }  #  self.default_dataset_cfg["dataset"]["classes"]
         self.default_dataset_cfg["train_url"] = self.default_dataset_cfg["dataset"]["train_url"]
 
         make_directories([self.default_dataset_cfg["dataset_dir"]])

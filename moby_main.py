@@ -6,30 +6,30 @@
 # Modified by Zhenda Xie
 # --------------------------------------------------------
 
-import os
-import time
 import argparse
 import datetime
-import numpy as np
+import os
+import time
 
+import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from timm.utils import AverageMeter
 
 from config import get_config
-from models import build_model
 from data import build_loader
-from lr_scheduler import build_scheduler
-from optimizer import build_optimizer
-from logger import create_logger
 from deeplenseutils import (
-    load_checkpoint,
-    save_checkpoint,
-    get_grad_norm,
     auto_resume_helper,
+    get_grad_norm,
+    load_checkpoint,
     reduce_tensor,
+    save_checkpoint,
 )
+from logger import create_logger
+from lr_scheduler import build_scheduler
+from models import build_model
+from optimizer import build_optimizer
 
 try:
     # noinspection PyUnresolvedReferences
@@ -39,11 +39,13 @@ except ImportError:
 
 
 def parse_option():
-    parser = argparse.ArgumentParser(
-        "MoBY training and evaluation script", add_help=False
-    )
+    parser = argparse.ArgumentParser("MoBY training and evaluation script", add_help=False)
     parser.add_argument(
-        "--cfg", type=str, required=True, metavar="FILE", help="path to config file",
+        "--cfg",
+        type=str,
+        required=True,
+        metavar="FILE",
+        help="path to config file",
     )
     parser.add_argument(
         "--opts",
@@ -70,9 +72,7 @@ def parse_option():
         "part: sharding the dataset into nonoverlapping pieces and only cache one piece",
     )
     parser.add_argument("--resume", help="resume from checkpoint")
-    parser.add_argument(
-        "--accumulation-steps", type=int, help="gradient accumulation steps"
-    )
+    parser.add_argument("--accumulation-steps", type=int, help="gradient accumulation steps")
     parser.add_argument(
         "--use-checkpoint",
         action="store_true",
@@ -94,9 +94,7 @@ def parse_option():
     )
     parser.add_argument("--tag", help="tag of experiment")
     parser.add_argument("--eval", action="store_true", help="Perform evaluation only")
-    parser.add_argument(
-        "--throughput", action="store_true", help="Test throughput only"
-    )
+    parser.add_argument("--throughput", action="store_true", help="Test throughput only")
 
     # distributed training
     parser.add_argument(
@@ -115,7 +113,7 @@ def parse_option():
 
 def main(config):
     dataset_train, _, data_loader_train, _, _ = build_loader(config)
-    
+
     config.defrost()
     config.DATA.TRAINING_IMAGES = len(dataset_train)
     config.freeze()
@@ -127,12 +125,8 @@ def main(config):
 
     optimizer = build_optimizer(config, model)
     if config.AMP_OPT_LEVEL != "O0":
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level=config.AMP_OPT_LEVEL
-        )
-    model = torch.nn.parallel.DistributedDataParallel(
-        model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False
-    )
+        model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     model_without_ddp = model.module
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -147,9 +141,7 @@ def main(config):
         resume_file = auto_resume_helper(config.OUTPUT)
         if resume_file:
             if config.MODEL.RESUME:
-                logger.warning(
-                    f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}"
-                )
+                logger.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
             config.defrost()
             config.MODEL.RESUME = resume_file
             config.freeze()
@@ -165,19 +157,13 @@ def main(config):
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(
-            config, model, data_loader_train, optimizer, epoch, lr_scheduler
-        )
-        if dist.get_rank() == 0 and (
-            epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)
-        ):
-            save_checkpoint(
-                config, epoch, model_without_ddp, 0.0, optimizer, lr_scheduler, logger
-            )
+        train_one_epoch(config, model, data_loader_train, optimizer, epoch, lr_scheduler)
+        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+            save_checkpoint(config, epoch, model_without_ddp, 0.0, optimizer, lr_scheduler, logger)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    logger.info("Training time {}".format(total_time_str))
+    logger.info(f"Training time {total_time_str}")
 
 
 def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
@@ -203,17 +189,13 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
             if config.TRAIN.CLIP_GRAD:
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    amp.master_params(optimizer), config.TRAIN.CLIP_GRAD
-                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
             else:
                 grad_norm = get_grad_norm(amp.master_params(optimizer))
         else:
             loss.backward()
             if config.TRAIN.CLIP_GRAD:
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), config.TRAIN.CLIP_GRAD
-                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
             else:
                 grad_norm = get_grad_norm(model.parameters())
         optimizer.step()
@@ -239,9 +221,7 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                 f"mem {memory_used:.0f}MB"
             )
     epoch_time = time.time() - start
-    logger.info(
-        f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}"
-    )
+    logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
 if __name__ == "__main__":
@@ -258,9 +238,7 @@ if __name__ == "__main__":
         rank = -1
         world_size = -1
     torch.cuda.set_device(config.LOCAL_RANK)
-    torch.distributed.init_process_group(
-        backend="nccl", init_method="env://", world_size=world_size, rank=rank
-    )
+    torch.distributed.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
     torch.distributed.barrier()
 
     seed = config.SEED + dist.get_rank()
@@ -269,21 +247,13 @@ if __name__ == "__main__":
     cudnn.benchmark = True
 
     # linear scale the learning rate according to total batch size, may not be optimal
-    linear_scaled_lr = (
-        config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    )
-    linear_scaled_warmup_lr = (
-        config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    )
-    linear_scaled_min_lr = (
-        config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    )
+    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
+    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
         linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
-        linear_scaled_warmup_lr = (
-            linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
-        )
+        linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
         linear_scaled_min_lr = linear_scaled_min_lr * config.TRAIN.ACCUMULATION_STEPS
     config.defrost()
     config.TRAIN.BASE_LR = linear_scaled_lr
@@ -292,9 +262,7 @@ if __name__ == "__main__":
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(
-        output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}"
-    )
+    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
 
     if dist.get_rank() == 0:
         path = os.path.join(config.OUTPUT, "config.json")

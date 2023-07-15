@@ -1,32 +1,32 @@
-from __future__ import print_function
 from os.path import join
-import matplotlib.pyplot as plt
-import matplotlib
-import numpy as np
-import torch
-from PIL import Image
-from torchvision.transforms import (
-    RandomRotation,
-    RandomCrop,
-    Pad,
-    Resize,
-    RandomAffine,
-    ToTensor,
-    Compose,
-    RandomPerspective,
-    Grayscale,
-)
-from sklearn.metrics import roc_curve, auc, confusion_matrix
-from deeplenseutils.dataset import DeepLenseDataset
-import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
 from typing import *
 
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn as nn
+from PIL import Image
+from sklearn.metrics import auc, confusion_matrix, roc_curve
+from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import (
+    Compose,
+    Grayscale,
+    Pad,
+    RandomAffine,
+    RandomCrop,
+    RandomPerspective,
+    RandomRotation,
+    Resize,
+    ToTensor,
+)
+
+from deeplenseutils.dataset import DeepLenseDataset
 
 # matplotlib.use("Agg")
 
 
-class Inference(object):
+class Inference:
     def __init__(
         self,
         best_model: nn.Module,
@@ -42,7 +42,7 @@ class Inference(object):
         destination_dir="data",
         current_time=None,
     ) -> None:
-        """Class for infering the trained model. \n 
+        """Class for infering the trained model. \n
         Plots `Confusion matrix`, computes `AUC` and `ROC` score.  `normalize=True`
 
         Args:
@@ -51,13 +51,13 @@ class Inference(object):
             device (Union[int, str]): number or name of device
             num_classes (int): # of classes for classification
             testset (Dataset): dataset for testing
-            dataset_name (str): name of testeset 
+            dataset_name (str): name of testeset
             labels_map (dict): dict for mapping labels to number e.g `{0: "axion"}`
             image_size (int): size of input image
             channels (int): # of channels of input image
             log_dir (str): directory for saving logs
             destination_dir (str, optional): directory where data is saved. Defaults to "data".
-        
+
         Example:
         >>>     infer_obj = Inference(
         >>>             best_model= model,
@@ -90,7 +90,7 @@ class Inference(object):
         """Converts labels to one-hot encoding
 
         Args:
-            label (np.ndarray): labels of dataset 
+            label (np.ndarray): labels of dataset
 
         Returns:
             b (np.ndarray): one-hot encoded vector
@@ -101,8 +101,7 @@ class Inference(object):
         return b.astype(int)
 
     def infer_plot_roc(self):
-        """Plots `ROC` curve
-        """
+        """Plots `ROC` curve"""
         total = 0
         all_test_loss = []
         all_test_accuracy = []
@@ -167,24 +166,20 @@ class Inference(object):
         self.inv_map = self.labels_map  # {v: k for k, v in self.labels_map.items()}
 
         # Compute micro-average ROC curve and ROC area
-        fpr["micro"], tpr["micro"], _ = roc_curve(
-            y_true_onehot.ravel(), y_score.ravel()
-        )
+        fpr["micro"], tpr["micro"], _ = roc_curve(y_true_onehot.ravel(), y_score.ravel())
         roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
 
         plt.figure()
         plt.plot(
             fpr["micro"],
             tpr["micro"],
-            label="micro-average ROC curve (area = {0:0.4f})"
-            "".format(roc_auc["micro"]),
+            label="micro-average ROC curve (area = {:0.4f})" "".format(roc_auc["micro"]),
         )
         for i in range(self.num_classes):
             plt.plot(
                 fpr[i],
                 tpr[i],
-                label="ROC curve of class " + self.inv_map[i] + " (area = {0:0.4f})"
-                "".format(roc_auc[i]),
+                label="ROC curve of class " + self.inv_map[i] + " (area = {:0.4f})" "".format(roc_auc[i]),
             )
 
         plt.plot([0, 1], [0, 1], "k--")
@@ -214,7 +209,7 @@ class Inference(object):
 
         Args:
             cm (Any): confusion matrix to be plotted
-            classes (list): list of classes available in dataset 
+            classes (list): list of classes available in dataset
             normalize (bool, optional): whether to noramlize or not. Defaults to False.
             title (str, optional): title of plot. Defaults to "Confusion matrix".
             cmap (Any, optional): colormap for plotting . Defaults to plt.cm.Blues.
@@ -249,9 +244,7 @@ class Inference(object):
         plt.xlabel("Predicted label")
         plt.tight_layout()
         if self.current_time:
-            plt.savefig(
-                f"{self.log_dir}/confusion_matrix_{self.current_time}.png", dpi=150
-            )
+            plt.savefig(f"{self.log_dir}/confusion_matrix_{self.current_time}.png", dpi=150)
         else:
             plt.savefig(f"{self.log_dir}/confusion_matrix.png", dpi=150)
         plt.show()
@@ -288,15 +281,15 @@ class Inference(object):
         Args:
             model (torch.nn.Module): best trained model to test
             x (Any): image to test on
-            device (Union[int, str]): number or name of device 
+            device (Union[int, str]): number or name of device
             labels_map (dict): dict for mapping labels to number e.g `{0: "axion"}`
-            resize1 (int): intermediate upsampling size 
+            resize1 (int): intermediate upsampling size
             resize2 (int): final size of image to network \n
             pad (Any): pytorch transform: `Pad` \n
             to_tensor (Any): pytorch transform: `ToTensor` \n
             to_gray (Any): pytorch transform: `Grayscale` \n
             image_size (int): size of input image \n
-            channels (int): # of channels of input image \n 
+            channels (int): # of channels of input image \n
         """
 
         model.eval()
@@ -307,9 +300,7 @@ class Inference(object):
         x = resize1(pad(x))
 
         print("###########################")
-        header = "angle |  " + "  ".join(
-            ["{}".format(value) for key, value in labels_map.items()]
-        )
+        header = "angle |  " + "  ".join([f"{value}" for key, value in labels_map.items()])
         print(header)
         with torch.no_grad():
             for r in range(8):
@@ -322,16 +313,14 @@ class Inference(object):
                 y = y.to("cpu").numpy().squeeze()
 
                 angle = r * 45
-                print("{:5d} : {}".format(angle, y))
+                print(f"{angle:5d} : {y}")
         print("###########################")
 
     def test_equivariance(self):
-        """Tests equivariance of the trained model. 
+        """Tests equivariance of the trained model.
         Evaluates the `model` on 8 rotated versions an image from `testset`
         """
-        valset_notransform = DeepLenseDataset(
-            self.destination_dir, "test", self.dataset_name, transform=None
-        )
+        valset_notransform = DeepLenseDataset(self.destination_dir, "test", self.dataset_name, transform=None)
         x, y = next(iter(valset_notransform))
         print(self.labels_map[y])
         self.rot_equivariance(
@@ -347,4 +336,3 @@ class Inference(object):
             image_size=self.image_size,
             channels=self.channels,
         )
-

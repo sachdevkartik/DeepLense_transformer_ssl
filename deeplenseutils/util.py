@@ -1,9 +1,10 @@
-import os
-from typing import List
-import random
-import torch
-import numpy as np
 import logging
+import os
+import random
+from typing import List
+
+import numpy as np
+import torch
 
 
 def make_directory(dirname: str) -> None:
@@ -46,19 +47,17 @@ def get_device(use_cuda=True, cuda_idx=0):
 
     Args:
         use_cuda (Bool): To used CUDA or not
-        cuda_idx (int): index of CUDA device 
-    
+        cuda_idx (int): index of CUDA device
+
     Returns:
-        device: CUDA device(s) being used 
+        device: CUDA device(s) being used
     """
 
     if use_cuda:
         if torch.cuda.is_available():
             assert cuda_idx in range(
                 0, torch.cuda.device_count()
-            ), "GPU index out of range. index lies in [{}, {})".format(
-                0, torch.cuda.device_count()
-            )
+            ), f"GPU index out of range. index lies in [{0}, {torch.cuda.device_count()})"
             device = torch.device("cuda:" + str(cuda_idx))
         else:
             print("cuda not found, will switch to cpu")
@@ -68,16 +67,16 @@ def get_device(use_cuda=True, cuda_idx=0):
     return device
 
 
-def init_logging_handler(log_dir, current_time, extra="", use_ray = False):
-    """Initializes the handler for logger. Create the logger directory if it doest exists. 
+def init_logging_handler(log_dir, current_time, extra="", use_ray=False):
+    """Initializes the handler for logger. Create the logger directory if it doest exists.
         Define the format of logging
         DEBUG logging level being used
 
     Args:
         log_dir (str): Logger directory
-        current_time (str): time from logging to begin  
+        current_time (str): time from logging to begin
         extra (str): Space for adding extra info in .txt file
-    
+
     """
 
     if not os.path.exists(log_dir):
@@ -87,9 +86,7 @@ def init_logging_handler(log_dir, current_time, extra="", use_ray = False):
         os.makedirs(os.path.join(log_dir, current_time))
 
     stderr_handler = logging.StreamHandler()
-    file_handler = logging.FileHandler(
-        "{}/{}/log_{}.txt".format(log_dir, current_time, current_time + extra)
-    )
+    file_handler = logging.FileHandler(f"{log_dir}/{current_time}/log_{current_time + extra}.txt")
     logging.basicConfig(handlers=[stderr_handler, file_handler])
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
@@ -98,4 +95,3 @@ def init_logging_handler(log_dir, current_time, extra="", use_ray = False):
 
     if not use_ray:
         os.makedirs(f"{log_dir}/{current_time}/checkpoint", exist_ok=True)
-

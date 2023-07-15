@@ -1,6 +1,6 @@
 import os
 
-current_file = os.path.abspath(__file__) 
+current_file = os.path.abspath(__file__)
 parent_directory = os.path.dirname(current_file)
 
 

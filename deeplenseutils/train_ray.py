@@ -1,26 +1,26 @@
-from __future__ import print_function
-import logging
 import copy
-import torch
-from tqdm import tqdm
-from typing import *
-import wandb
-import torch.nn as nn
-from ray.tune.integration.wandb import wandb_mixin
 import json
-import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
-from transformers import get_cosine_schedule_with_warmup
+import logging
 import math
-from torch.utils.data import DataLoader
 import os
+import time
+from typing import *
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import wandb
 from ray import tune
 from ray.air import session
-import time
+from ray.tune.integration.wandb import wandb_mixin
+from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
+from torch.utils.data import DataLoader
 from torchinfo import summary
-from models.transformer_zoo import TransformerModels
-from deeplenseutils.inference import Inference
+from tqdm import tqdm
+from transformers import get_cosine_schedule_with_warmup
 
+from deeplenseutils.inference import Inference
+from models.transformer_zoo import TransformerModels
 
 RUN = 0
 BEST_ACC_OVERALL = 0
@@ -46,36 +46,36 @@ def train(
 ):
     """Supervised learning for image classification. Uses `wandb` for logging
 
-    Args:
-        epochs (int): # of epochs
-        model (nn.Module): model for training
-        device (Union[int, str]): number or name of device
-        train_loader (Any): pytorch loader for trainset
-        valid_loader (Any): pytorch loader for testset
-        criterion (nn.Module): loss critirea
-        optimizer (nn.Module): optimizer for model training
-        use_lr_schedule (nn.Module): whether to use learning rate scheduler
-        scheduler_step (nn.Module): type of learning rate scheduler
-        path (str): path to save models
-        config (dict): model hyperparameters as dict 
-        dataset_name (str): type of dataset
-        log_freq (int, optional): logging frequency. Defaults to 100.
-   
-   Example:
-   >>>     train(
-   >>>     epochs=25, 
-   >>>     model=model,
-   >>>     device=0,
-   >>>     train_loader=train_loader,
-   >>>     valid_loader=test_loader,
-   >>>     criterion=criterion,
-   >>>     optimizer=optimizer,
-   >>>     use_lr_schedule=train_config["lr_schedule_config"]["use_lr_schedule"],
-   >>>     scheduler_step=cosine_scheduler,
-   >>>     path=PATH,
-   >>>     log_freq=20,
-   >>>     config=train_config,
-   >>>     dataset_name=dataset_name)
+     Args:
+         epochs (int): # of epochs
+         model (nn.Module): model for training
+         device (Union[int, str]): number or name of device
+         train_loader (Any): pytorch loader for trainset
+         valid_loader (Any): pytorch loader for testset
+         criterion (nn.Module): loss critirea
+         optimizer (nn.Module): optimizer for model training
+         use_lr_schedule (nn.Module): whether to use learning rate scheduler
+         scheduler_step (nn.Module): type of learning rate scheduler
+         path (str): path to save models
+         config (dict): model hyperparameters as dict
+         dataset_name (str): type of dataset
+         log_freq (int, optional): logging frequency. Defaults to 100.
+
+    Example:
+    >>>     train(
+    >>>     epochs=25,
+    >>>     model=model,
+    >>>     device=0,
+    >>>     train_loader=train_loader,
+    >>>     valid_loader=test_loader,
+    >>>     criterion=criterion,
+    >>>     optimizer=optimizer,
+    >>>     use_lr_schedule=train_config["lr_schedule_config"]["use_lr_schedule"],
+    >>>     scheduler_step=cosine_scheduler,
+    >>>     path=PATH,
+    >>>     log_freq=20,
+    >>>     config=train_config,
+    >>>     dataset_name=dataset_name)
     """
 
     # Transformer model
@@ -147,12 +147,8 @@ def train(
     use_lr_schedule = (config["lr_schedule_config"]["use_lr_schedule"],)
     config["dataset_name"] = dataset_name
     config["lr_schedule_config"]["cosine_scheduler"] = {}
-    config["lr_schedule_config"]["cosine_scheduler"][
-        "num_warmup_steps"
-    ] = num_warmup_steps
-    config["lr_schedule_config"]["cosine_scheduler"]["num_training_steps"] = int(
-        num_training_steps
-    )
+    config["lr_schedule_config"]["cosine_scheduler"]["num_warmup_steps"] = num_warmup_steps
+    config["lr_schedule_config"]["cosine_scheduler"]["num_training_steps"] = int(num_training_steps)
     network_type = config["network_type"]
 
     log_dir = f"{os.path.dirname(os.path.abspath(__file__))}/../{log_dir}"
@@ -160,11 +156,15 @@ def train(
     os.makedirs(f"{log_dir}/checkpoint", exist_ok=True)
 
     current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-    with open(f"{log_dir}/config_{current_time}.json", "w",) as fp:
+    with open(
+        f"{log_dir}/config_{current_time}.json",
+        "w",
+    ) as fp:
         json.dump(config, fp)
 
     path = os.path.join(
-        f"{log_dir}/checkpoint", f"{network_type}_{dataset_name}_{current_time}.pt",
+        f"{log_dir}/checkpoint",
+        f"{network_type}_{dataset_name}_{current_time}.pt",
     )
     # path = f"{os.path.dirname(os.path.abspath(__file__))}/../{path}"
 
@@ -273,14 +273,14 @@ def train(
 
         os.makedirs(f"{log_dir}/run_best", exist_ok=True)
 
-        best_path = os.path.join(
-            f"{log_dir}/run_best", f"{network_type}_{dataset_name}_{current_time}.pt"
-        )
+        best_path = os.path.join(f"{log_dir}/run_best", f"{network_type}_{dataset_name}_{current_time}.pt")
 
         torch.save(BEST_CHECKPOINT.state_dict(), best_path)
 
-        with open(f"{log_dir}/run_best/best_config_{current_time}.json", "w",) as fp:
+        with open(
+            f"{log_dir}/run_best/best_config_{current_time}.json",
+            "w",
+        ) as fp:
             json.dump(BEST_CONFIG, fp)
 
     return {"best_accuracy": best_accuracy}
-

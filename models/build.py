@@ -7,10 +7,12 @@
 # --------------------------------------------------------
 
 from functools import partial
+
+from .moby import MoBY
+from .swin_transformer import SwinTransformer
+
 # from timm.models import vit_deit_small_patch16_224
 
-from .swin_transformer import SwinTransformer
-from .moby import MoBY
 
 # vit_models = dict(
 #     deit_small=vit_deit_small_patch16_224,
@@ -21,7 +23,7 @@ def build_model(config):
     model_type = config.MODEL.TYPE
     encoder_type = config.MODEL.MOBY.ENCODER
 
-    if encoder_type == 'swin':
+    if encoder_type == "swin":
         enc = partial(
             SwinTransformer,
             img_size=config.DATA.IMG_SIZE,
@@ -40,12 +42,12 @@ def build_model(config):
             use_checkpoint=config.TRAIN.USE_CHECKPOINT,
             norm_befor_mlp=config.MODEL.SWIN.NORM_BEFORE_MLP,
         )
-    elif encoder_type.startswith('vit') or encoder_type.startswith('deit'):
+    elif encoder_type.startswith("vit") or encoder_type.startswith("deit"):
         enc = vit_models[encoder_type]
     else:
-        raise NotImplementedError(f'--> Unknown encoder_type: {encoder_type}')
+        raise NotImplementedError(f"--> Unknown encoder_type: {encoder_type}")
 
-    if model_type == 'moby':
+    if model_type == "moby":
         encoder = enc(
             num_classes=0,
             drop_path_rate=config.MODEL.MOBY.ONLINE_DROP_PATH_RATE,
@@ -64,12 +66,12 @@ def build_model(config):
             proj_num_layers=config.MODEL.MOBY.PROJ_NUM_LAYERS,
             pred_num_layers=config.MODEL.MOBY.PRED_NUM_LAYERS,
         )
-    elif model_type == 'linear':
+    elif model_type == "linear":
         model = enc(
             num_classes=config.MODEL.NUM_CLASSES,
             drop_path_rate=config.MODEL.DROP_PATH_RATE,
         )
     else:
-        raise NotImplementedError(f'--> Unknown model_type: {model_type}')
+        raise NotImplementedError(f"--> Unknown model_type: {model_type}")
 
     return model

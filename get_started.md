@@ -69,7 +69,7 @@ We use standard ImageNet dataset, you can download it from http://image-net.org/
 - For standard folder dataset, move validation images to labeled sub-folders. The file structure should look like:
   ```bash
   $ tree data
-  imagenet 
+  imagenet
   ├── train
   │   ├── class1
   │   │   ├── img1.jpeg
@@ -88,7 +88,7 @@ We use standard ImageNet dataset, you can download it from http://image-net.org/
       │   ├── img6.jpeg
       │   └── ...
       └── ...
- 
+
   ```
 - To boost the slow speed when reading images from massive small files, we also support zipped ImageNet, which includes
   four files:
@@ -104,14 +104,14 @@ We use standard ImageNet dataset, you can download it from http://image-net.org/
       ├── train.zip
       ├── val_map.txt
       └── val.zip
-  
+
   $ head -n 5 data/ImageNet-Zip/val_map.txt
   ILSVRC2012_val_00000001.JPEG	65
   ILSVRC2012_val_00000002.JPEG	970
   ILSVRC2012_val_00000003.JPEG	230
   ILSVRC2012_val_00000004.JPEG	809
   ILSVRC2012_val_00000005.JPEG	516
-  
+
   $ head -n 5 data/ImageNet-Zip/train_map.txt
   n01440764/n01440764_10026.JPEG	0
   n01440764/n01440764_10027.JPEG	0
@@ -125,7 +125,7 @@ We use standard ImageNet dataset, you can download it from http://image-net.org/
 To train `MoBY` with `Swin Transformer` on ImageNet, run:
 
 ```bash
-python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> --master_port 12345 moby_main.py \ 
+python -m torch.distributed.launch --nproc_per_node <num-of-gpus-to-use> --master_port 12345 moby_main.py \
 --cfg <config-file> --data-path <imagenet-path> [--batch-size <batch-size-per-gpu> --output <output-directory> --tag <job-tag>]
 ```
 
